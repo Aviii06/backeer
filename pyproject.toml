@@ -1,0 +1,22 @@
+[project]
+name = "backeer"
+version = "0.1.0"
+description = "Observable local workflow for extracting YouTube audio, separating stems with Demucs, and preparing Audacity imports."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+orchestration = [
+  "prefect>=3.0",
+]
+dev = [
+  "pytest>=8.0",
+]
+
+[project.scripts]
+backeer = "backeer.cli:main"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
