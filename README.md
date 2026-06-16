@@ -39,8 +39,8 @@ Useful options:
 backeer URL --name "song-name"
 backeer URL --runs-dir ./runs
 backeer URL --model htdemucs_6s
-backeer URL --audacity-pipe
-backeer URL --open-audacity
+backeer URL --with-audacity
+backeer --replay /path/to/run_dir --with-audacity
 ```
 
 To run the binary through Prefect so the run appears in the dashboard:
@@ -123,5 +123,20 @@ The run folder is the main debugging artifact. Even if a stage fails, logs and p
 ## Audacity
 
 The workflow always creates an Audacity import folder containing symlinks or copies of the stems plus an `import_order.txt` manifest.
+When you pass `--with-audacity` the workflow will attempt to import stems into Audacity using Audacity's scripting pipe (mod-script-pipe):
 
-The optional `--audacity-pipe` mode attempts to import stems into a running Audacity instance through `mod-script-pipe`. You must enable that module inside Audacity first.
+- If Audacity is already running and has `mod-script-pipe` enabled, Backeer will send import commands to the running instance so everything appears in the same Audacity window (one new project/tab per import).
+- If Audacity is not running, Backeer will start it, wait briefly for the script pipe to appear, then import the stems into that instance.
+- If the script pipe is not available or not responding, Backeer will fall back to opening the stem files directly with the Audacity application (this may open multiple windows depending on platform behavior).
+
+Note: For the best experience (single window, one tab per replay), enable the scripting pipe inside Audacity. In recent Audacity versions the option is called "mod-script-pipe" or appears under "Scripting/Tools" in Preferences — enable it and restart Audacity.
+
+Replay mode:
+
+You can replay the Audacity import step from an existing run (so you don't need to re-run download/separate/etc):
+
+```bash
+backeer --replay runs/run_2026-06-16_19-02-09_xyz_93623fe8 --with-audacity
+```
+
+This recreates the `audacity/` import folder (symlinks/copies) and then attempts to import the stems into Audacity using the scripting pipe.
