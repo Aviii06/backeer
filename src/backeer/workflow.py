@@ -48,7 +48,11 @@ def run_workflow(config: WorkflowConfig) -> JobState:
             events=events,
         )
         if config.with_audacity:
-            open_in_audacity(audacity_paths, events)
+            open_in_audacity(
+                audacity_paths,
+                events,
+                project_name=config.name or state.run_dir.name,
+            )
 
         state.status = "completed"
         write_job(state)
@@ -111,7 +115,11 @@ def replay_audacity(
             events=events,
         )
         if with_audacity:
-            open_in_audacity(audacity_paths, events)
+            open_in_audacity(
+                audacity_paths,
+                events,
+                project_name=state.config.name or state.run_dir.name,
+            )
         
         events.event("job", "replay.completed", "audacity replay completed successfully")
     except Exception as exc:

@@ -151,18 +151,23 @@ def _find_any_pipes() -> tuple[Path, Path] | None:
     return None
 
 
-def open_in_audacity(paths: list[Path], events: EventWriter) -> None:
+def open_in_audacity(
+    paths: list[Path],
+    events: EventWriter,
+    project_name: str | None = None,
+) -> None:
     """Import stems into a single Audacity project.
 
     This function automatically detects if Audacity is running:
     - If running: uses the script pipe to import stems into the existing window
     - If not running: starts Audacity, waits for pipes, then imports stems
-    
+
     All imports go through the mod-script-pipe for a single consolidated project.
-    
+
     Args:
         paths: List of audio file paths to open
         events: EventWriter for logging
+        project_name: Optional name to assign to the new Audacity project
     """
     if not paths:
         events.event("audacity", "open.skipped", "no stems available to open in Audacity")
@@ -222,6 +227,39 @@ def open_in_audacity(paths: list[Path], events: EventWriter) -> None:
                 return False
 
             try:
+                # Create a fresh Audacity project before importing stems.
+                # This helps keep each replay in its own project/tab/window.
+                new_cmds = ["New:\n"]
+                if project_name:
+                    safe_name = project_name.replace('"', "'")
+                    new_cmds.append(f'SetProjectName: Name="{safe_name}"\n')
+
+                for new_cmd in new_cmds:
+                    deadline = time.time() + 5.0
+                    new_bytes = new_cmd.encode("utf-8")
+                    written = 0
+                    while written < len(new_bytes) and time.time() < deadline:
+                        try:
+                            n = os.write(to_fd, new_bytes[written:])
+                            if n > 0:
+                                written += n
+                        except (BlockingIOError, OSError) as e:
+                            if e.errno == errno.EAGAIN or isinstance(e, BlockingIOError):
+                                time.sleep(0.1)
+                                continue
+                            else:
+                                raise
+                    if written < len(new_bytes):
+                        events.event(
+                            "audacity",
+                            "pipe.blocked",
+                            "audacity pipe timeout while creating a new project",
+                        )
+                        return False
+
+                # Give Audacity a moment to create the new project.
+                time.sleep(1.5)
+
                 # Send absolute paths so Audacity can resolve them regardless of
                 # Audacity's working directory.
                 for path in paths:
@@ -325,39 +363,27 @@ def open_in_audacity(paths: list[Path], events: EventWriter) -> None:
             )
             return False
 
-    # Check if pipes already exist (Audacity is running)
-    if pipe_to.exists() and pipe_from.exists():
-        events.event(
-            "audacity",
-            "pipe.available",
-            "Audacity is running with script pipe available",
-        )
-        if _send_via_pipe():
-            events.event("audacity", "open.completed", "imported stems into running Audacity")
-            return
-        else:
-            # Pipe exists but failed to open. Stale pipes - continue to try restarting.
-            events.event(
-                "audacity",
-                "pipe.stale",
-                "pipe files exist but are not responding; will try restarting Audacity",
-            )
-
-    # Audacity is not running or pipes are stale. Check if we can start it.
-    if not _is_audacity_running():
+    # Always open Audacity first so each replay begins with a separate project.
+    started = _start_audacity_app()
+    if started:
         events.event(
             "audacity",
             "audacity.starting",
-            "Audacity not running; starting it now",
+            "opening Audacity before importing stems",
         )
-        started = _start_audacity_app()
-        if not started:
-            events.event(
-                "audacity",
-                "open.failed",
-                "failed to start Audacity application",
-            )
-            return
+    elif pipe_to.exists() and pipe_from.exists():
+        events.event(
+            "audacity",
+            "audacity.running",
+            "Audacity is already running; using existing script pipe",
+        )
+    else:
+        events.event(
+            "audacity",
+            "open.failed",
+            "failed to start Audacity application and no script pipe is available",
+        )
+        return
 
     # Wait for pipes to appear (Audacity starting and mod-script-pipe creating them)
     import time
