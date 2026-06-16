@@ -18,6 +18,7 @@ Install these command-line tools in your environment:
 - `yt-dlp`
 - `ffmpeg` and `ffprobe`
 - Demucs, runnable as `python -m demucs`
+- `torchcodec` (required by newer `torchaudio` versions for WAV export)
 
 Prefect is optional. The CLI works without it and still writes full run logs.
 
@@ -123,13 +124,12 @@ The run folder is the main debugging artifact. Even if a stage fails, logs and p
 ## Audacity
 
 The workflow always creates an Audacity import folder containing symlinks or copies of the stems plus an `import_order.txt` manifest.
-When you pass `--with-audacity` the workflow will attempt to import stems into Audacity using Audacity's scripting pipe (mod-script-pipe):
+When you pass `--with-audacity` the workflow opens stems in Audacity in a single consolidated project:
 
-- If Audacity is already running and has `mod-script-pipe` enabled, Backeer will send import commands to the running instance so everything appears in the same Audacity window (one new project/tab per import).
-- If Audacity is not running, Backeer will start it, wait briefly for the script pipe to appear, then import the stems into that instance.
-- If the script pipe is not available or not responding, Backeer will fall back to opening the stem files directly with the Audacity application (this may open multiple windows depending on platform behavior).
+- If the mod-script-pipe is available and responding, Backeer sends import commands directly into the running Audacity instance.
+- If the script pipe is not available, Backeer writes an Audacity LOF (List of Files) manifest and opens it. This loads all stems into one project on all platforms.
 
-Note: For the best experience (single window, one tab per replay), enable the scripting pipe inside Audacity. In recent Audacity versions the option is called "mod-script-pipe" or appears under "Scripting/Tools" in Preferences — enable it and restart Audacity.
+Note: For the best experience with the pipe route, enable the scripting pipe inside Audacity. In recent Audacity versions the option is called "mod-script-pipe" or appears under "Scripting/Tools" in Preferences — enable it and restart Audacity.
 
 Replay mode:
 
@@ -140,3 +140,38 @@ backeer --replay runs/run_2026-06-16_19-02-09_xyz_93623fe8 --with-audacity
 ```
 
 This recreates the `audacity/` import folder (symlinks/copies) and then attempts to import the stems into Audacity using the scripting pipe.
+
+In replay mode, if the original run failed before stems were separated (e.g. due to a missing
+dependency), Backeer detects the missing stems and re-runs the separation step automatically.
+
+## Troubleshooting
+
+**`ModuleNotFoundError: No module named 'torchcodec'`**
+
+Install `torchcodec` in your environment:
+
+```bash
+pip install torchcodec
+```
+
+This is required by newer `torchaudio` versions (2.11+) for WAV export. If you see this error,
+re-run the separation step via replay:
+
+```bash
+backeer --replay runs/<run_dir> --with-audacity
+```
+
+**Audacity opens multiple windows/separate projects**
+
+On Linux, passing multiple `.wav` files to `audacity` on the command line opens each as a
+separate project. Backeer works around this by writing a LOF (List of Files) manifest and
+opening it — all stems load into a single project.
+
+If you still see multiple windows, ensure `mod-script-pipe` is enabled in Audacity
+(Preferences → Modules → mod-script-pipe → Enabled) and restart Audacity.
+
+**Replay says "no stems available"**
+
+The original run likely failed before separation completed. Backeer now detects this
+automatically and re-runs the separation step if normalized audio exists. Install any
+missing dependencies first, then replay.
