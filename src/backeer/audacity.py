@@ -12,26 +12,6 @@ from .events import EventWriter
 IMPORT_ORDER = ("vocals.wav", "guitar.wav", "piano.wav", "bass.wav", "drums.wav", "other.wav")
 
 
-def _is_audacity_running() -> bool:
-    """Check if Audacity is currently running."""
-    if sys.platform == "darwin":
-        # Use ps to check for Audacity process
-        result = subprocess.run(
-            ["pgrep", "-f", "Audacity"],
-            capture_output=True,
-            text=True,
-        )
-        return result.returncode == 0
-    else:
-        # For other platforms, use pgrep if available
-        result = subprocess.run(
-            ["pgrep", "audacity"],
-            capture_output=True,
-            text=True,
-        )
-        return result.returncode == 0
-
-
 def prepare_audacity_folder(
     *,
     stem_paths: dict[str, Path],
@@ -102,38 +82,6 @@ def _pipes_for_uid(uid: int) -> tuple[Path, Path]:
     )
 
 
-def _start_audacity_app() -> bool:
-    """Try to start the Audacity application (without opening files).
-
-    Returns True if a start command was issued, False otherwise.
-    """
-    if sys.platform == "darwin":
-        # Try direct executable path first (more reliable than 'open -a')
-        direct_path = "/Applications/Audacity.app/Contents/MacOS/Audacity"
-        if Path(direct_path).exists():
-            cmd = [direct_path]
-        else:
-            cmd = ["open", "-a", "Audacity"]
-    else:
-        audacity_bin = shutil.which("audacity")
-        if audacity_bin is not None:
-            cmd = [audacity_bin]
-        elif sys.platform.startswith("win"):
-            cmd = ["cmd", "/c", "start", "Audacity"]
-        else:
-            # We don't have a reliable portable way to start Audacity on every
-            # Linux distribution; bail out so we don't try to call xdg-open on a
-            # non-existent file and confuse users.
-            return False
-
-    try:
-        # Start Audacity detached so we don't block. Suppress output.
-        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        return True
-    except Exception:
-        return False
-
-
 def _find_any_pipes() -> tuple[Path, Path] | None:
     """Scan /tmp for any audacity script pipe pairs and return the first match.
 
@@ -156,13 +104,10 @@ def open_in_audacity(
     events: EventWriter,
     project_name: str | None = None,
 ) -> None:
-    """Import stems into a single Audacity project.
+    """Open stems in a single Audacity project.
 
-    This function automatically detects if Audacity is running:
-    - If running: uses the script pipe to import stems into the existing window
-    - If not running: starts Audacity, waits for pipes, then imports stems
-
-    All imports go through the mod-script-pipe for a single consolidated project.
+    Uses mod-script-pipe if available; falls back to a LOF (List of Files)
+    manifest that opens all files in one project.
 
     Args:
         paths: List of audio file paths to open
@@ -372,75 +317,55 @@ def open_in_audacity(
             )
             return False
 
-    # Always open Audacity first so each replay begins with a separate project.
-    started = _start_audacity_app()
-    if started:
-        events.event(
-            "audacity",
-            "audacity.starting",
-            "opening Audacity before importing stems",
-        )
-    elif pipe_to.exists() and pipe_from.exists():
-        events.event(
-            "audacity",
-            "audacity.running",
-            "Audacity is already running; using existing script pipe",
-        )
+    # Check if pipes exist already (Audacity running with mod-script-pipe enabled).
+    # Only use the pipe route if pipes are already available.
+
+    if pipe_to.exists() and pipe_from.exists():
+        events.event("audacity", "audacity.running", "Audacity is already running; using script pipe")
+        events.event("audacity", "pipe.available", "Audacity script pipe became available")
+        if _send_via_pipe():
+            events.event("audacity", "open.completed", "imported stems into Audacity")
+            return
+        # Pipe write failed — fall through to LOF.
+        events.event("audacity", "pipe.failed", "pipe write failed; falling back to LOF import")
     else:
-        events.event(
-            "audacity",
-            "open.failed",
-            "failed to start Audacity application and no script pipe is available",
-        )
-        return
+        events.event("audacity", "pipe.unavailable", "script pipe not available; using LOF import")
 
-    # Wait for pipes to appear (Audacity starting and mod-script-pipe creating them)
-    import time
-    deadline = time.time() + 8.0
-    while time.time() < deadline:
-        if pipe_to.exists() and pipe_from.exists():
-            events.event(
-                "audacity",
-                "pipe.available",
-                "Audacity script pipe became available",
-            )
-            if _send_via_pipe():
-                events.event("audacity", "open.completed", "imported stems into Audacity")
-                return
-            else:
-                # Pipe still failing, try opening files directly
-                break
-        time.sleep(0.2)
-
-    # Pipes are not available or mod-script-pipe failed. Fall back to direct file opening.
-    events.event(
-        "audacity",
-        "pipe.unavailable",
-        "Audacity script pipe not available or not responding; falling back to direct file opening",
-    )
-    
+    # Pipe route not viable. Create a LOF (List of Files) and open it with
+    # Audacity. This is the only reliable way to load multiple files into a
+    # single project on Linux.
     try:
-        cmd = audacity_open_command(paths)
+        lof_path = _write_lof_file(paths)
+        cmd = audacity_open_command([lof_path])
         subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         events.event(
             "audacity",
             "open.completed",
-            "opened files directly in Audacity",
-            {"command": " ".join(cmd)},
+            "opened stems in Audacity via LOF",
+            {"command": " ".join(cmd), "lof": str(lof_path)},
         )
     except Exception as exc:
         events.event(
             "audacity",
             "open.failed",
-            "failed to open Audacity directly",
+            "failed to open Audacity",
             {"error": str(exc)},
         )
+
+
+def _write_lof_file(paths: list[Path]) -> Path:
+    """Write an Audacity LOF (List of Files) manifest so all stems open in one project."""
+    lof_path = paths[0].parent / "stems.lof"
+    lines = []
+    for path in paths:
+        lines.append(f'file "{path.resolve()}" offset 0')
+    lof_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return lof_path
 
 
 def audacity_open_command(paths: list[Path]) -> list[str]:
     path_args = [str(path) for path in paths]
     if sys.platform == "darwin":
-        # Use direct executable path instead of 'open -a' for better reliability
         direct_path = "/Applications/Audacity.app/Contents/MacOS/Audacity"
         if Path(direct_path).exists():
             return [direct_path, *path_args]
