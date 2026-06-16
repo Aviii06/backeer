@@ -107,6 +107,14 @@ def replay_audacity(
     
     try:
         events.event("job", "replay.started", "replaying from saved state", {"run_dir": str(state.run_dir)})
+
+        if not state.stem_paths and state.normalized_audio and state.normalized_audio.exists():
+            events.event("job", "replay.resume", "stem separation was not completed; re-running separation", {"run_dir": str(state.run_dir)})
+            require_tools()
+            state.demucs_output_dir = separate_stems(state, events)
+            write_job(state)
+            state.stem_paths = validate_stems(state, events)
+            write_job(state)
         
         # Prepare Audacity folder and open if requested
         audacity_paths = prepare_audacity_folder(
