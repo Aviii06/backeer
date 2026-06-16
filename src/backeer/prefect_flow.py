@@ -25,7 +25,7 @@ except ImportError:  # pragma: no cover
 if flow is not None:
 
     def mark_failed(state, exc: Exception) -> None:
-        events = EventWriter(state.job_id, state.run_dir)
+        events = EventWriter(state.job_id, state.run_dir, timezone=state.config.timezone)
         state.status = "failed"
         write_job(state)
         events.event("job", "failed", str(exc), {"error_type": type(exc).__name__})
@@ -37,7 +37,7 @@ if flow is not None:
     @task
     def create_state(config: WorkflowConfig):
         state = create_job(config)
-        events = EventWriter(state.job_id, state.run_dir)
+        events = EventWriter(state.job_id, state.run_dir, timezone=config.timezone)
         write_job(state)
         events.event("job", "created", "created run folder", {"run_dir": str(state.run_dir)})
         state.status = "running"
@@ -47,7 +47,7 @@ if flow is not None:
     @task
     def download_task(state):
         try:
-            events = EventWriter(state.job_id, state.run_dir)
+            events = EventWriter(state.job_id, state.run_dir, timezone=state.config.timezone)
             state.source_audio = download_audio(state, events)
             write_job(state)
             return state
@@ -58,7 +58,7 @@ if flow is not None:
     @task
     def normalize_task(state):
         try:
-            events = EventWriter(state.job_id, state.run_dir)
+            events = EventWriter(state.job_id, state.run_dir, timezone=state.config.timezone)
             state.normalized_audio = normalize_audio(state, events)
             write_job(state)
             return state
@@ -69,7 +69,7 @@ if flow is not None:
     @task
     def demucs_task(state):
         try:
-            events = EventWriter(state.job_id, state.run_dir)
+            events = EventWriter(state.job_id, state.run_dir, timezone=state.config.timezone)
             state.demucs_output_dir = separate_stems(state, events)
             write_job(state)
             return state
@@ -80,7 +80,7 @@ if flow is not None:
     @task
     def validate_task(state):
         try:
-            events = EventWriter(state.job_id, state.run_dir)
+            events = EventWriter(state.job_id, state.run_dir, timezone=state.config.timezone)
             state.stem_paths = validate_stems(state, events)
             write_job(state)
             return state
@@ -91,11 +91,12 @@ if flow is not None:
     @task
     def audacity_task(state):
         try:
-            events = EventWriter(state.job_id, state.run_dir)
+            events = EventWriter(state.job_id, state.run_dir, timezone=state.config.timezone)
             audacity_paths = prepare_audacity_folder(
                 stem_paths=state.stem_paths,
                 audacity_dir=state.run_dir / "audacity",
                 events=events,
+                import_order=state.config.get_profile().import_order,
             )
             if state.config.with_audacity:
                 open_in_audacity(
@@ -118,6 +119,7 @@ if flow is not None:
         runs_dir: str = "runs",
         model: str = "htdemucs_6s",
         with_audacity: bool = False,
+        timezone: str = "Asia/Kolkata",
     ) -> str:
         config = WorkflowConfig(
             url=url,
@@ -125,6 +127,7 @@ if flow is not None:
             runs_dir=Path(runs_dir),
             model=model,
             with_audacity=with_audacity,
+            timezone=timezone,
         )
         check_requirements()
         state = create_state(config)

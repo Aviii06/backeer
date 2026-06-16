@@ -8,23 +8,23 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 
-LOCAL_TZ = ZoneInfo("Asia/Kolkata")
-
-
-def now_iso() -> str:
-    return datetime.now(LOCAL_TZ).isoformat(timespec="seconds")
+def now_iso(tz: ZoneInfo | None = None) -> str:
+    return datetime.now(tz or ZoneInfo("Asia/Kolkata")).isoformat(timespec="seconds")
 
 
 @dataclass
 class EventWriter:
     job_id: str
     run_dir: Path
+    timezone: str = "Asia/Kolkata"
     events_path: Path = field(init=False)
     commands_path: Path = field(init=False)
+    _tz: ZoneInfo = field(init=False)
 
     def __post_init__(self) -> None:
         self.events_path = self.run_dir / "events.jsonl"
         self.commands_path = self.run_dir / "commands.jsonl"
+        self._tz = ZoneInfo(self.timezone)
 
     def event(
         self,
@@ -34,7 +34,7 @@ class EventWriter:
         data: dict[str, Any] | None = None,
     ) -> None:
         payload = {
-            "ts": now_iso(),
+            "ts": now_iso(self._tz),
             "job_id": self.job_id,
             "stage": stage,
             "type": event_type,
@@ -49,7 +49,7 @@ class EventWriter:
         self._append_jsonl(
             self.commands_path,
             {
-                "ts": now_iso(),
+                "ts": now_iso(self._tz),
                 "job_id": self.job_id,
                 "stage": stage,
                 "cwd": str(cwd) if cwd else None,

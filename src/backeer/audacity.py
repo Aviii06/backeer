@@ -9,20 +9,21 @@ from pathlib import Path
 from .events import EventWriter
 
 
-IMPORT_ORDER = ("vocals.wav", "guitar.wav", "piano.wav", "bass.wav", "drums.wav", "other.wav")
-
-
 def prepare_audacity_folder(
     *,
     stem_paths: dict[str, Path],
     audacity_dir: Path,
     events: EventWriter,
+    import_order: tuple[str, ...] | None = None,
 ) -> list[Path]:
     events.event("audacity", "prepare.started", "preparing Audacity import folder")
     audacity_dir.mkdir(parents=True, exist_ok=True)
 
+    if import_order is None:
+        import_order = tuple(stem_paths.keys())
+
     imported: list[Path] = []
-    for stem_name in IMPORT_ORDER:
+    for stem_name in import_order:
         source = stem_paths.get(stem_name)
         if source is None:
             continue
@@ -144,7 +145,6 @@ def open_in_audacity(
     def _send_via_pipe():
         import time
         import select
-        import fcntl
         import errno
 
         try:

@@ -8,7 +8,8 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-from .models import WorkflowConfig
+from .config import load_config
+from .models import WorkflowConfig, STEM_PROFILES
 from .workflow import run_workflow, replay_audacity, slugify
 
 
@@ -19,12 +20,26 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("url", nargs="?", help="YouTube URL to process")
     parser.add_argument("--name", help="Human-friendly run name")
-    parser.add_argument("--runs-dir", type=Path, default=Path("runs"))
-    parser.add_argument("--model", default="htdemucs_6s")
+    parser.add_argument("--runs-dir", type=Path, help="Directory to store runs")
+    parser.add_argument(
+        "--model",
+        choices=list(STEM_PROFILES),
+        help="Demucs model to use",
+    )
+    parser.add_argument(
+        "--config",
+        type=Path,
+        help="Path to backeer.toml config file",
+    )
     parser.add_argument(
         "--with-audacity",
         action="store_true",
         help="Open stems in Audacity. If Audacity is running, adds stems via pipe. If not, starts Audacity first.",
+    )
+    parser.add_argument(
+        "--no-audacity",
+        action="store_true",
+        help="Override config file: do not open Audacity",
     )
     parser.add_argument(
         "--prefect",
@@ -54,36 +69,39 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     cli_args = list(argv) if argv is not None else sys.argv[1:]
     args = build_parser().parse_args(cli_args)
-    
+
+    cfg = load_config(args.config)
+
     def _unescape_shell_escapes(s: str) -> str:
-        # Remove common backslash-escaping from terminal-pasted URLs,
-        # e.g. "watch\?v\=...\&list\=..." -> "watch?v=...&list=..."
         return re.sub(r"\\(.)", r"\1", s)
 
     if args.url:
         args.url = _unescape_shell_escapes(args.url)
-    
-    # Handle replay mode
+
     if args.replay:
         if args.url or args.prefect or args.detach:
             build_parser().error("--replay cannot be used with URL, --prefect, or --detach")
         try:
             replay_audacity(
                 args.replay,
-                with_audacity=args.with_audacity,
+                with_audacity=args.with_audacity or (cfg.with_audacity and not args.no_audacity),
             )
             print(f"\nAudacity replay completed: {args.replay}")
             print(f"Audacity import folder: {args.replay / 'audacity'}")
             return 0
         except Exception as exc:
             raise SystemExit(str(exc)) from exc
-    
+
     if not args.url:
         build_parser().error("URL is required (unless using --replay)")
     if args.prefect_api_url and not args.prefect:
         build_parser().error("--prefect-api-url can only be used with --prefect")
     if args.detach:
-        return start_detached(cli_args, args)
+        return start_detached(cli_args, args, cfg)
+
+    model = args.model or cfg.model
+    runs_dir = args.runs_dir or cfg.runs_dir
+    with_audacity = args.with_audacity or (cfg.with_audacity and not args.no_audacity)
 
     if args.prefect:
         if args.prefect_api_url:
@@ -95,9 +113,10 @@ def main(argv: list[str] | None = None) -> int:
             run_dir = youtube_to_audacity_stems(
                 args.url,
                 name=args.name,
-                runs_dir=str(args.runs_dir),
-                model=args.model,
-                with_audacity=args.with_audacity,
+                runs_dir=str(runs_dir),
+                model=model,
+                with_audacity=with_audacity,
+                timezone=cfg.timezone,
             )
         except RuntimeError as exc:
             raise SystemExit(str(exc)) from exc
@@ -109,9 +128,10 @@ def main(argv: list[str] | None = None) -> int:
     config = WorkflowConfig(
         url=args.url,
         name=args.name,
-        runs_dir=args.runs_dir,
-        model=args.model,
-        with_audacity=args.with_audacity,
+        runs_dir=runs_dir,
+        model=model,
+        with_audacity=with_audacity,
+        timezone=cfg.timezone,
     )
     state = run_workflow(config)
     print(f"\nRun completed: {state.run_dir}")
@@ -119,11 +139,12 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-def start_detached(cli_args: list[str], args: argparse.Namespace) -> int:
+def start_detached(cli_args: list[str], args: argparse.Namespace, cfg) -> int:
     child_args = [arg for arg in cli_args if arg != "--detach"]
     stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     slug = slugify(args.name or "youtube-audio")
-    log_dir = args.runs_dir / "daemon"
+    runs_dir = args.runs_dir or cfg.runs_dir
+    log_dir = runs_dir / "daemon"
     log_dir.mkdir(parents=True, exist_ok=True)
     log_path = log_dir / f"{stamp}_{slug}.log"
     command = [sys.executable, "-m", "backeer", *child_args]
