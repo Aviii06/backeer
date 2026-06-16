@@ -61,6 +61,67 @@ def run_workflow(config: WorkflowConfig) -> JobState:
         raise
 
 
+def replay_audacity(
+    run_dir: Path,
+    *,
+    audacity_pipe: bool = False,
+    open_audacity: bool = False,
+) -> None:
+    """Replay the Audacity preparation and opening from an existing run.
+    
+    This loads the job state from a previous run and skips directly to the
+    Audacity preparation and opening steps. Useful for testing without
+    re-running expensive processing.
+    """
+    run_dir = Path(run_dir)
+    job_path = run_dir / "job.json"
+    
+    if not job_path.exists():
+        raise RuntimeError(f"Job file not found: {job_path}")
+    
+    with job_path.open() as f:
+        job_data = json.load(f)
+    
+    # Reconstruct the state
+    state = JobState(
+        job_id=job_data["job_id"],
+        run_dir=Path(job_data["run_dir"]),
+        config=WorkflowConfig(
+            url=job_data["config"]["url"],
+            name=job_data["config"].get("name"),
+            runs_dir=Path(job_data["config"]["runs_dir"]),
+            model=job_data["config"].get("model", "htdemucs_6s"),
+            audacity_pipe=audacity_pipe,
+            open_audacity=open_audacity,
+        ),
+        status=job_data.get("status", "created"),
+        source_audio=Path(job_data["source_audio"]) if job_data.get("source_audio") else None,
+        normalized_audio=Path(job_data["normalized_audio"]) if job_data.get("normalized_audio") else None,
+        demucs_output_dir=Path(job_data["demucs_output_dir"]) if job_data.get("demucs_output_dir") else None,
+        stem_paths={name: Path(path) for name, path in job_data.get("stem_paths", {}).items()},
+    )
+    
+    events = EventWriter(state.job_id, state.run_dir)
+    
+    try:
+        events.event("job", "replay.started", "replaying from saved state", {"run_dir": str(state.run_dir)})
+        
+        # Prepare Audacity folder and open if requested
+        audacity_paths = prepare_audacity_folder(
+            stem_paths=state.stem_paths,
+            audacity_dir=state.run_dir / "audacity",
+            events=events,
+        )
+        if audacity_pipe or open_audacity:
+            # Use skip_pipe=True in replay mode to avoid hanging on stale pipes
+            open_in_audacity(audacity_paths, events, skip_pipe=True)
+        
+        events.event("job", "replay.completed", "audacity replay completed successfully")
+    except Exception as exc:
+        events.event("job", "replay.failed", str(exc), {"error_type": type(exc).__name__})
+        raise
+
+
 def require_tools() -> None:
     missing = [tool for tool in ("yt-dlp", "ffmpeg", "ffprobe") if shutil.which(tool) is None]
     if missing:
