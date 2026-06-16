@@ -44,14 +44,14 @@ def test_cli_accepts_prefect_dashboard_options() -> None:
             "--prefect-api-url",
             "http://127.0.0.1:4200/api",
             "--detach",
-            "--open-audacity",
+            "--with-audacity",
         ]
     )
 
     assert args.prefect is True
     assert args.prefect_api_url == "http://127.0.0.1:4200/api"
     assert args.detach is True
-    assert args.open_audacity is True
+    assert args.with_audacity is True
 
 
 def test_audacity_open_command_uses_macos_app_launcher(monkeypatch) -> None:

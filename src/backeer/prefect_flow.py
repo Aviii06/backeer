@@ -97,7 +97,7 @@ if flow is not None:
                 audacity_dir=state.run_dir / "audacity",
                 events=events,
             )
-            if state.config.open_audacity:
+            if state.config.with_audacity:
                 open_in_audacity(audacity_paths, events)
             state.status = "completed"
             write_job(state)
@@ -113,16 +113,14 @@ if flow is not None:
         name: str | None = None,
         runs_dir: str = "runs",
         model: str = "htdemucs_6s",
-        audacity_pipe: bool = False,
-        open_audacity: bool = False,
+        with_audacity: bool = False,
     ) -> str:
         config = WorkflowConfig(
             url=url,
             name=name,
             runs_dir=Path(runs_dir),
             model=model,
-            audacity_pipe=audacity_pipe,
-            open_audacity=open_audacity,
+            with_audacity=with_audacity,
         )
         check_requirements()
         state = create_state(config)

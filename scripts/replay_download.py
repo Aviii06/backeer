@@ -47,8 +47,7 @@ def main(argv: list[str] | None = None) -> int:
         name=cfg.get("name"),
         runs_dir=Path(cfg.get("runs_dir", "runs")),
         model=cfg.get("model", "htdemucs_6s"),
-        audacity_pipe=cfg.get("audacity_pipe", False),
-        open_audacity=cfg.get("open_audacity", False),
+        with_audacity=cfg.get("with_audacity", False),
     )
 
     state = JobState(job_id=job.get("job_id", "replay"), run_dir=run_dir, config=config)

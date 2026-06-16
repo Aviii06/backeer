@@ -21,8 +21,7 @@ class WorkflowConfig:
     runs_dir: Path = Path("runs")
     model: str = "htdemucs_6s"
     expected_stems: tuple[str, ...] = EXPECTED_STEMS_6S
-    audacity_pipe: bool = False
-    open_audacity: bool = False
+    with_audacity: bool = False
 
 
 @dataclass

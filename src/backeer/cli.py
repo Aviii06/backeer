@@ -21,16 +21,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--runs-dir", type=Path, default=Path("runs"))
     parser.add_argument("--model", default="htdemucs_6s")
     parser.add_argument(
-        "--audacity-pipe",
+        "--with-audacity",
         action="store_true",
-        help="Attempt to import stems into a running Audacity instance through mod-script-pipe.",
-    )
-    parser.add_argument(
-        "--open-audacity",
-        "--audacity-open",
-        dest="open_audacity",
-        action="store_true",
-        help="Open the prepared stems in Audacity after the workflow completes.",
+        help="Open stems in Audacity. If Audacity is running, adds stems via pipe. If not, starts Audacity first.",
     )
     parser.add_argument(
         "--prefect",
@@ -68,8 +61,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             replay_audacity(
                 args.replay,
-                audacity_pipe=args.audacity_pipe,
-                open_audacity=args.open_audacity,
+                with_audacity=args.with_audacity,
             )
             print(f"\nAudacity replay completed: {args.replay}")
             print(f"Audacity import folder: {args.replay / 'audacity'}")
@@ -96,8 +88,7 @@ def main(argv: list[str] | None = None) -> int:
                 name=args.name,
                 runs_dir=str(args.runs_dir),
                 model=args.model,
-                audacity_pipe=args.audacity_pipe,
-                open_audacity=args.open_audacity,
+                with_audacity=args.with_audacity,
             )
         except RuntimeError as exc:
             raise SystemExit(str(exc)) from exc
@@ -111,8 +102,7 @@ def main(argv: list[str] | None = None) -> int:
         name=args.name,
         runs_dir=args.runs_dir,
         model=args.model,
-        audacity_pipe=args.audacity_pipe,
-        open_audacity=args.open_audacity,
+        with_audacity=args.with_audacity,
     )
     state = run_workflow(config)
     print(f"\nRun completed: {state.run_dir}")

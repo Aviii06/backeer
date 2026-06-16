@@ -47,7 +47,7 @@ def run_workflow(config: WorkflowConfig) -> JobState:
             audacity_dir=state.run_dir / "audacity",
             events=events,
         )
-        if config.audacity_pipe or config.open_audacity:
+        if config.with_audacity:
             open_in_audacity(audacity_paths, events)
 
         state.status = "completed"
@@ -64,8 +64,7 @@ def run_workflow(config: WorkflowConfig) -> JobState:
 def replay_audacity(
     run_dir: Path,
     *,
-    audacity_pipe: bool = False,
-    open_audacity: bool = False,
+    with_audacity: bool = False,
 ) -> None:
     """Replay the Audacity preparation and opening from an existing run.
     
@@ -91,8 +90,7 @@ def replay_audacity(
             name=job_data["config"].get("name"),
             runs_dir=Path(job_data["config"]["runs_dir"]),
             model=job_data["config"].get("model", "htdemucs_6s"),
-            audacity_pipe=audacity_pipe,
-            open_audacity=open_audacity,
+            with_audacity=with_audacity,
         ),
         status=job_data.get("status", "created"),
         source_audio=Path(job_data["source_audio"]) if job_data.get("source_audio") else None,
@@ -112,9 +110,8 @@ def replay_audacity(
             audacity_dir=state.run_dir / "audacity",
             events=events,
         )
-        if audacity_pipe or open_audacity:
-            # Use skip_pipe=True in replay mode to avoid hanging on stale pipes
-            open_in_audacity(audacity_paths, events, skip_pipe=True)
+        if with_audacity:
+            open_in_audacity(audacity_paths, events)
         
         events.event("job", "replay.completed", "audacity replay completed successfully")
     except Exception as exc:

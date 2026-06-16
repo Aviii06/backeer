@@ -12,6 +12,26 @@ from .events import EventWriter
 IMPORT_ORDER = ("vocals.wav", "guitar.wav", "piano.wav", "bass.wav", "drums.wav", "other.wav")
 
 
+def _is_audacity_running() -> bool:
+    """Check if Audacity is currently running."""
+    if sys.platform == "darwin":
+        # Use ps to check for Audacity process
+        result = subprocess.run(
+            ["pgrep", "-f", "Audacity"],
+            capture_output=True,
+            text=True,
+        )
+        return result.returncode == 0
+    else:
+        # For other platforms, use pgrep if available
+        result = subprocess.run(
+            ["pgrep", "audacity"],
+            capture_output=True,
+            text=True,
+        )
+        return result.returncode == 0
+
+
 def prepare_audacity_folder(
     *,
     stem_paths: dict[str, Path],
@@ -131,19 +151,18 @@ def _find_any_pipes() -> tuple[Path, Path] | None:
     return None
 
 
-def open_in_audacity(paths: list[Path], events: EventWriter, skip_pipe: bool = False) -> None:
+def open_in_audacity(paths: list[Path], events: EventWriter) -> None:
     """Import stems into a single Audacity project.
 
-    This function prefers the mod-script-pipe (if available). If the pipe is
-    not present it will attempt to start Audacity (without passing files) and
-    wait briefly for the pipes to appear. If pipes become available the stems
-    are imported into the running Audacity instance. If pipes are not
-    available the function falls back to opening files directly with Audacity.
+    This function automatically detects if Audacity is running:
+    - If running: uses the script pipe to import stems into the existing window
+    - If not running: starts Audacity, waits for pipes, then imports stems
+    
+    All imports go through the mod-script-pipe for a single consolidated project.
     
     Args:
         paths: List of audio file paths to open
         events: EventWriter for logging
-        skip_pipe: If True, skip pipe attempts and go directly to file opening
     """
     if not paths:
         events.event("audacity", "open.skipped", "no stems available to open in Audacity")
@@ -176,27 +195,30 @@ def open_in_audacity(paths: list[Path], events: EventWriter, skip_pipe: bool = F
         import time
         import select
         import fcntl
+        import errno
 
         try:
-            # Open the "to" pipe with a timeout by setting it non-blocking
+            # Try to open the "to" pipe for writing with a timeout
             try:
+                # Use O_NONBLOCK for open to prevent hanging if reader isn't ready
+                time.sleep(1.5)  # Brief pause to increase chance that Audacity is ready for the pipe
                 to_fd = os.open(str(pipe_to), os.O_WRONLY | os.O_NONBLOCK)
-            except BlockingIOError:
-                # Pipe exists but no reader (Audacity not listening)
-                events.event(
-                    "audacity",
-                    "pipe.blocked",
-                    "audacity pipe exists but no reader (Audacity may not be listening)",
-                    {"to": str(pipe_to)},
-                )
-                return False
-            except Exception as exc:
-                events.event(
-                    "audacity",
-                    "pipe.failed",
-                    "failed to open Audacity pipe for writing",
-                    {"error": str(exc)},
-                )
+            except OSError as exc:
+                if exc.errno in (errno.ENXIO, errno.ENOENT):
+                    # Pipe doesn't exist or no reader
+                    events.event(
+                        "audacity",
+                        "pipe.failed",
+                        "Audacity pipe not ready (Audacity may not have mod-script-pipe enabled)",
+                        {"error": str(exc), "to": str(pipe_to)},
+                    )
+                else:
+                    events.event(
+                        "audacity",
+                        "pipe.failed",
+                        "failed to open Audacity pipe for writing",
+                        {"error": str(exc), "to": str(pipe_to)},
+                    )
                 return False
 
             try:
@@ -209,17 +231,33 @@ def open_in_audacity(paths: list[Path], events: EventWriter, skip_pipe: bool = F
                         # Fall back to the path string if resolution fails.
                         path_arg = str(path)
                     cmd = f'Import2: Filename="{path_arg}"\n'
-                    try:
-                        os.write(to_fd, cmd.encode("utf-8"))
-                    except BlockingIOError:
-                        # Pipe buffer full; Audacity not consuming
+                    
+                    # Write with a timeout by retrying on EAGAIN
+                    deadline = time.time() + 5.0
+                    cmd_bytes = cmd.encode("utf-8")
+                    written = 0
+                    while written < len(cmd_bytes) and time.time() < deadline:
+                        try:
+                            n = os.write(to_fd, cmd_bytes[written:])
+                            if n > 0:
+                                written += n
+                        except (BlockingIOError, OSError) as e:
+                            if e.errno == errno.EAGAIN or isinstance(e, BlockingIOError):
+                                # Pipe buffer full, wait a bit and retry
+                                time.sleep(0.1)
+                                continue
+                            else:
+                                raise
+                    
+                    if written < len(cmd_bytes):
                         events.event(
                             "audacity",
                             "pipe.blocked",
-                            "audacity pipe buffer full (Audacity not consuming)",
+                            "audacity pipe timeout (Audacity not consuming)",
                         )
                         return False
-                    # Give Audacity a tiny moment to start processing each command.
+                    
+                    # Give Audacity a moment to process each command.
                     time.sleep(1.5)
 
                 events.event(
@@ -230,7 +268,7 @@ def open_in_audacity(paths: list[Path], events: EventWriter, skip_pipe: bool = F
                 )
 
                 # Attempt to read any responses Audacity wrote to the "from" pipe so
-                # we can surface errors (non-blocking and with a short timeout).
+                # we can surface errors (with a short timeout).
                 try:
                     fd = os.open(str(pipe_from), os.O_RDONLY | os.O_NONBLOCK)
                 except Exception as exc:
@@ -287,60 +325,55 @@ def open_in_audacity(paths: list[Path], events: EventWriter, skip_pipe: bool = F
             )
             return False
 
-    # If the pipes already exist and we're not skipping them, use them immediately.
-    if not skip_pipe and pipe_to.exists() and pipe_from.exists():
-        events.event("audacity", "pipe.started", "importing stems through Audacity pipe")
+    # Check if pipes already exist (Audacity is running)
+    if pipe_to.exists() and pipe_from.exists():
+        events.event(
+            "audacity",
+            "pipe.available",
+            "Audacity is running with script pipe available",
+        )
         if _send_via_pipe():
-            events.event("audacity", "open.completed", "sent stems to Audacity")
+            events.event("audacity", "open.completed", "imported stems into running Audacity")
         return
 
-    # Pipes were not present or skipped. Attempt to start Audacity so it can create the
-    # pipes (this only helps if the mod-script-pipe module is enabled in
-    # Audacity preferences).
-    if not skip_pipe:
+    # Audacity is not running. Check if we can start it.
+    if not _is_audacity_running():
+        events.event(
+            "audacity",
+            "audacity.starting",
+            "Audacity not running; starting it now",
+        )
         started = _start_audacity_app()
-        if started:
-            # Wait briefly for Audacity to start and create the pipes.
-            import time
+        if not started:
+            events.event(
+                "audacity",
+                "open.failed",
+                "failed to start Audacity application",
+            )
+            return
 
-            deadline = time.time() + 3.0
-            while time.time() < deadline:
-                if pipe_to.exists() and pipe_from.exists():
-                    events.event(
-                        "audacity",
-                        "pipe.started",
-                        "audacity started and script pipe became available",
-                    )
-                    if _send_via_pipe():
-                        events.event("audacity", "open.completed", "sent stems to Audacity")
-                    return
-                time.sleep(0.1)
+    # Wait for pipes to appear (Audacity starting and mod-script-pipe creating them)
+    import time
+    deadline = time.time() + 5.0
+    while time.time() < deadline:
+        if pipe_to.exists() and pipe_from.exists():
+            events.event(
+                "audacity",
+                "pipe.available",
+                "Audacity script pipe became available",
+            )
+            if _send_via_pipe():
+                events.event("audacity", "open.completed", "imported stems into Audacity")
+            return
+        time.sleep(0.2)
 
-    # If we reach this point the pipes are not available. Fall back to opening
-    # files directly with Audacity (they'll open in separate windows/tabs).
+    # Timeout waiting for pipes
     events.event(
         "audacity",
-        "pipe.unavailable",
-        "Audacity script pipe not available; falling back to direct file opening",
+        "open.failed",
+        "Audacity started but script pipe did not appear (enable mod-script-pipe in Audacity preferences)",
         {"to": str(pipe_to), "from": str(pipe_from)},
     )
-    
-    try:
-        cmd = audacity_open_command(paths)
-        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        events.event(
-            "audacity",
-            "open.completed",
-            "opened files directly in Audacity",
-            {"command": " ".join(cmd)},
-        )
-    except Exception as exc:
-        events.event(
-            "audacity",
-            "open.failed",
-            "failed to open Audacity directly",
-            {"error": str(exc)},
-        )
 
 
 def audacity_open_command(paths: list[Path]) -> list[str]:
