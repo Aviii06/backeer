@@ -231,8 +231,17 @@ def open_in_audacity(
                 # This helps keep each replay in its own project/tab/window.
                 new_cmds = ["New:\n"]
                 if project_name:
-                    safe_name = project_name.replace('"', "'")
-                    new_cmds.append(f'SetProjectName: Name="{safe_name}"\n')
+                    # Audacity's mod-script-pipe in some versions does not
+                    # recognize a SetProjectName batch command. Do not send
+                    # an unrecognized command (it causes a BatchCommand failed
+                    # response). Instead, log an event so the UI can surface
+                    # that the requested name was not applied automatically.
+                    events.event(
+                        "audacity",
+                        "projectname.unsupported",
+                        "requested project name will not be set (unsupported command)",
+                        {"requested": project_name},
+                    )
 
                 for new_cmd in new_cmds:
                     deadline = time.time() + 5.0

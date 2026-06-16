@@ -4,6 +4,7 @@ import argparse
 import subprocess
 import sys
 import os
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -53,6 +54,14 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     cli_args = list(argv) if argv is not None else sys.argv[1:]
     args = build_parser().parse_args(cli_args)
+    
+    def _unescape_shell_escapes(s: str) -> str:
+        # Remove common backslash-escaping from terminal-pasted URLs,
+        # e.g. "watch\?v\=...\&list\=..." -> "watch?v=...&list=..."
+        return re.sub(r"\\(.)", r"\1", s)
+
+    if args.url:
+        args.url = _unescape_shell_escapes(args.url)
     
     # Handle replay mode
     if args.replay:
