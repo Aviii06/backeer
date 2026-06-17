@@ -13,14 +13,38 @@ The default Demucs model is `htdemucs_6s`, which produces:
 
 ## Requirements
 
-Install these command-line tools in your environment:
+Install the command-line tools via Homebrew (macOS) or your system package manager:
 
-- `yt-dlp`
-- `ffmpeg` and `ffprobe`
-- Demucs, runnable as `python -m demucs`
-- `torchcodec` (required by newer `torchaudio` versions for WAV export)
+```bash
+brew install yt-dlp ffmpeg python@3.13
+```
+
+Then install the Python packages in your environment:
+
+```bash
+pip install demucs torchcodec
+```
+
+- `yt-dlp` — downloads audio from YouTube
+- `ffmpeg` / `ffprobe` — converts and probes audio
+- `demucs` — AI stem separation, runnable as `python -m demucs`
+- `torchcodec` — required by newer `torchaudio` versions for WAV export
 
 Prefect is optional. The CLI works without it and still writes full run logs.
+
+## Config
+
+Create a `backeer.toml` in your project root (or any ancestor directory) to set defaults:
+
+```toml
+[backeer]
+model = "htdemucs_6s"
+runs-dir = "~/backeer-runs"
+with-audacity = true
+timezone = "Asia/Kolkata"
+```
+
+CLI flags always override config values. Available models: `htdemucs_6s` (6 stems), `htdemucs` (4 stems), `htdemucs_ft` (4 stems, fine-tuned), `mdx_extra` (4 stems).
 
 ## Run
 

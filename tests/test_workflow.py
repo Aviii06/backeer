@@ -57,6 +57,16 @@ def test_cli_accepts_prefect_dashboard_options() -> None:
 def test_audacity_open_command_uses_macos_app_launcher(monkeypatch) -> None:
     monkeypatch.setattr("sys.platform", "darwin")
 
+    direct_path = "/Applications/Audacity.app/Contents/MacOS/Audacity"
+    real_exists = Path.exists
+
+    def fake_exists(self):
+        if str(self) == direct_path:
+            return False
+        return real_exists(self)
+
+    monkeypatch.setattr(Path, "exists", fake_exists)
+
     assert audacity_open_command([Path("vocals.wav"), Path("drums.wav")]) == [
         "open",
         "-a",

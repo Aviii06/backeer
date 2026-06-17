@@ -46,6 +46,7 @@ def run_workflow(config: WorkflowConfig) -> JobState:
             stem_paths=state.stem_paths,
             audacity_dir=state.run_dir / "audacity",
             events=events,
+            import_order=config.get_profile().import_order,
         )
         if config.with_audacity:
             open_in_audacity(
@@ -103,7 +104,7 @@ def replay_audacity(
         stem_paths={name: Path(path) for name, path in job_data.get("stem_paths", {}).items()},
     )
     
-    events = EventWriter(state.job_id, state.run_dir)
+    events = EventWriter(state.job_id, state.run_dir, timezone=state.config.timezone)
     
     try:
         events.event("job", "replay.started", "replaying from saved state", {"run_dir": str(state.run_dir)})
@@ -121,6 +122,7 @@ def replay_audacity(
             stem_paths=state.stem_paths,
             audacity_dir=state.run_dir / "audacity",
             events=events,
+            import_order=state.config.get_profile().import_order,
         )
         if with_audacity:
             open_in_audacity(
@@ -256,7 +258,7 @@ def validate_stems(state: JobState, events: EventWriter) -> dict[str, Path]:
     stem_paths: dict[str, Path] = {}
     errors: list[str] = []
 
-    for stem in state.config.expected_stems:
+    for stem in state.config.get_profile().stems:
         path = state.demucs_output_dir / stem
         exists = path.exists()
         size = path.stat().st_size if exists else 0
